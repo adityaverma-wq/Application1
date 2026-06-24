@@ -2,53 +2,85 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from pmdarima import auto_arima
 from statsmodels.tsa.arima.model import ARIMA
 from datetime import datetime
 
+# -----------------------------
+# Streamlit page configuration
+# -----------------------------
 st.set_page_config(
     page_title="Stock Forecast using ARIMA",
     layout="wide"
 )
 
-st.title("📈 Stock Forecast using ARIMA")
+st.title("📈 Stock Price Forecast using ARIMA")
 st.write(
-    "Downloads last 5 years of stock data from YFinance "
-    "and forecasts price for June 2027."
+    "Download last 5 years of stock data from YFinance "
+    "and forecast stock price for June 2027"
 )
 
+# -----------------------------
+# User input
+# -----------------------------
 ticker = st.text_input(
-    "Enter stock ticker:",
+    "Enter stock ticker",
     value="AAPL"
 )
 
 if st.button("Generate Forecast"):
 
     try:
+
+        # -----------------------------
+        # Download stock data
+        # -----------------------------
         with st.spinner("Downloading stock data..."):
 
             end_date = datetime.today()
             start_date = end_date - pd.DateOffset(years=5)
 
-            stock_data = yf.download(
+            data = yf.download(
                 ticker,
                 start=start_date,
-                end=end_date
+                end=end_date,
+                progress=False
             )
 
-        if stock_data.empty:
-            st.error("No data found. Check ticker symbol.")
+        if data.empty:
+            st.error(
+                "No stock data found. Please check ticker."
+            )
             st.stop()
 
-        prices = stock_data["Close"]
+        # -----------------------------
+        # Close price selection
+        # -----------------------------
+        prices = data["Close"]
 
-        st.subheader("Historical Data")
-        st.dataframe(stock_data.tail())
+        if isinstance(prices, pd.DataFrame):
+            prices = prices.iloc[:, 0]
 
-        # Historical chart
-        st.subheader("Last 5 Years Price Chart")
+        prices = prices.dropna()
 
-        fig1, ax1 = plt.subplots(figsize=(12,5))
+        # -----------------------------
+        # Display stock data
+        # -----------------------------
+        st.subheader("Recent Stock Data")
+
+        st.dataframe(
+            data.tail()
+        )
+
+        # -----------------------------
+        # Historical line chart
+        # -----------------------------
+        st.subheader(
+            "Historical Stock Price (5 Years)"
+        )
+
+        fig1, ax1 = plt.subplots(
+            figsize=(12, 5)
+        )
 
         ax1.plot(
             prices.index,
@@ -59,59 +91,77 @@ if st.button("Generate Forecast"):
             f"{ticker} Historical Price"
         )
 
-        ax1.set_xlabel("Date")
-        ax1.set_ylabel("Price")
+        ax1.set_xlabel(
+            "Date"
+        )
+
+        ax1.set_ylabel(
+            "Price"
+        )
 
         ax1.grid()
 
         st.pyplot(fig1)
 
-        # Monthly resample
-        monthly_prices = prices.resample("M").mean()
+        # -----------------------------
+        # Monthly average data
+        # -----------------------------
+        monthly_prices = prices.resample(
+            "ME"
+        ).mean()
 
-        st.write("Training Auto-ARIMA model...")
+        monthly_prices = monthly_prices.dropna()
 
-        auto_model = auto_arima(
-            monthly_prices,
-            seasonal=False,
-            suppress_warnings=True,
-            error_action="ignore"
-        )
-
-        best_order = auto_model.order
+        # -----------------------------
+        # Fixed ARIMA order
+        # -----------------------------
+        arima_order = (1, 1, 1)
 
         st.write(
-            f"Selected ARIMA Order: {best_order}"
+            f"ARIMA Model Used: {arima_order}"
         )
 
+        # -----------------------------
+        # Train ARIMA model
+        # -----------------------------
         model = ARIMA(
             monthly_prices,
-            order=best_order
+            order=arima_order
         )
 
         fitted_model = model.fit()
 
-        future_target = pd.Timestamp(
+        # -----------------------------
+        # Forecast to June 2027
+        # -----------------------------
+        target_date = pd.Timestamp(
             "2027-06-30"
         )
 
+        last_date = monthly_prices.index[-1]
+
         months_needed = (
-            (future_target.year -
-             monthly_prices.index[-1].year) * 12
+            (target_date.year - last_date.year)
+            * 12
             +
-            (future_target.month -
-             monthly_prices.index[-1].month)
+            (
+                target_date.month
+                - last_date.month
+            )
         )
+
+        if months_needed <= 0:
+            months_needed = 1
 
         forecast = fitted_model.forecast(
             steps=months_needed
         )
 
         future_dates = pd.date_range(
-            start=monthly_prices.index[-1]
-                  + pd.offsets.MonthEnd(),
+            start=last_date
+            + pd.offsets.MonthEnd(1),
             periods=months_needed,
-            freq="M"
+            freq="ME"
         )
 
         forecast_df = pd.DataFrame(
@@ -121,22 +171,34 @@ if st.button("Generate Forecast"):
             }
         )
 
-        june_2027 = forecast_df[
+        # -----------------------------
+        # June 2027 prediction
+        # -----------------------------
+        june_forecast = forecast_df[
             forecast_df["Date"]
             .dt.strftime("%Y-%m")
             == "2027-06"
         ]
 
-        predicted_price = float(
-            june_2027["Forecast"].iloc[0]
-        )
+        if len(june_forecast) > 0:
 
-        st.success(
-            f"Predicted price for June 2027: "
-            f"{predicted_price:.2f}"
-        )
+            predicted_price = (
+                june_forecast[
+                    "Forecast"
+                ].iloc[0]
+            )
 
-        st.subheader("Forecast Chart")
+            st.success(
+                f"Predicted Price for June 2027: "
+                f"${predicted_price:.2f}"
+            )
+
+        # -----------------------------
+        # Forecast chart
+        # -----------------------------
+        st.subheader(
+            "Forecast Chart"
+        )
 
         fig2, ax2 = plt.subplots(
             figsize=(12,5)
@@ -155,19 +217,43 @@ if st.button("Generate Forecast"):
         )
 
         ax2.axvline(
-            pd.Timestamp("2027-06-30"),
+            pd.Timestamp(
+                "2027-06-30"
+            ),
             linestyle="--"
         )
 
-        ax2.legend()
-
         ax2.set_title(
-            f"{ticker} Forecast until June 2027"
+            f"{ticker} Forecast till June 2027"
         )
+
+        ax2.set_xlabel(
+            "Date"
+        )
+
+        ax2.set_ylabel(
+            "Price"
+        )
+
+        ax2.legend()
 
         ax2.grid()
 
         st.pyplot(fig2)
 
+        # -----------------------------
+        # Forecast table
+        # -----------------------------
+        st.subheader(
+            "Forecast Values"
+        )
+
+        st.dataframe(
+            forecast_df
+        )
+
     except Exception as e:
-        st.error(f"Error: {e}")
+
+        st.error(
+            f"Error: {str(e)}"
+        )
